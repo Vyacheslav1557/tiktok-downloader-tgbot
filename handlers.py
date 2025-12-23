@@ -1,6 +1,7 @@
 import asyncio
 import random
 import re
+import html
 
 import telegram
 from telegram import Update, InputMediaPhoto, BotCommand
@@ -25,12 +26,12 @@ def is_youtube_shorts_link(text: str) -> bool:
 
 def build_caption(user: telegram.User, url: str) -> str:
     user_id = user.id
-    username = user.username or user.first_name
-    user_link = f"[{username}](tg://user?id={user_id})"
+    username = html.escape(user.username or user.first_name)
+    user_link = f'<a href="tg://user?id={user_id}">{username}</a>'
 
-    original = f"[оригинал]({url})"
+    original = f'<a href="{url}">оригинал</a>'
 
-    return fr"От {user_link} \- {original}"
+    return f"От {user_link} - {original}"
 
 
 TELEGRAM_MAX_IMG_SIZE = 10 * 1024 * 1024
@@ -77,7 +78,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         chat_id=chat_id,
                         media=media_group,
                         caption=caption,
-                        parse_mode=telegram.constants.ParseMode.MARKDOWN_V2
+                        parse_mode=telegram.constants.ParseMode.HTML
                     )
                     logger.info("Images sent successfully as media group")
                 else:
@@ -92,7 +93,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         audio=audio_data,
                         title=collection.audio.title,
                         caption=caption,
-                        parse_mode=telegram.constants.ParseMode.MARKDOWN_V2
+                        parse_mode=telegram.constants.ParseMode.HTML
                     )
                     logger.info("Audio sent successfully as audio")
 
@@ -101,8 +102,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 if video.temp.size > TELEGRAM_MAX_VIDEO_SIZE:
                     await context.bot.send_message(
                         update.message.chat_id, 
-                        f"Видео слишком большое. [Оригинал]({url}).",
-                        parse_mode=telegram.constants.ParseMode.MARKDOWN_V2
+                        f"Видео слишком большое. <a href=\"{url}\">Оригинал</a>.",
+                        parse_mode=telegram.constants.ParseMode.HTML
                     )
                     return
                 with open(video.temp.path, "rb") as video_file:
@@ -112,7 +113,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     video=video_data,
                     supports_streaming=True,
                     caption=caption,
-                    parse_mode=telegram.constants.ParseMode.MARKDOWN_V2
+                    parse_mode=telegram.constants.ParseMode.HTML
                 )
                 logger.info("Video sent successfully as media")
 
@@ -120,8 +121,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         logger.error(f"Error sending content: {e}")
         await context.bot.send_message(
             update.message.chat_id,
-            f"Что-то пошло не так. [Оригинал]({url}).",
-            parse_mode=telegram.constants.ParseMode.MARKDOWN_V2
+            f"Что-то пошло не так. <a href=\"{url}\">Оригинал</a>.",
+            parse_mode=telegram.constants.ParseMode.HTML
         )
 
 

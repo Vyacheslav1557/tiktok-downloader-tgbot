@@ -3,8 +3,8 @@ import random
 import re
 
 import telegram
-from telegram import Update, InputMediaPhoto
-from telegram.ext import ContextTypes
+from telegram import Update, InputMediaPhoto, BotCommand
+from telegram.ext import ContextTypes, Application
 
 from api import TikTokApiClient, Collection, Video, YouTubeApiClient
 from logger import logger
@@ -23,60 +23,6 @@ def is_youtube_shorts_link(text: str) -> bool:
     return bool(re.match(shorts_pattern, text))
 
 
-insults = [
-    "Только честно, ты даун?",
-    "Ну значит ты долбаеб!",
-    "Животное безмозглое, научись думать!",
-    "Да, да, да... И про кальмара! 🦑",
-    "Долбаеб #1",
-    "Долбаеб #2",
-    "Ебало оффни, дура",
-    "Паузу!",
-    "Паузу, встала!",
-    "Встала!",
-    "Палку!",
-    "Ха тьфу на тебе в ебало блядь",
-    "Саша",
-    "Дудецкая",
-    "Шоколад",
-    "Подружка дудецкой",
-    "Феталь",
-    "Фетальный ребенок",
-    "52",
-    "Кальмар",
-    "Никольская",
-    "Ректал",
-    "Ректальный шао",
-    "Макака",
-    "Никто никого не рвал, это полный бред",
-    "У тебя пиздец на лице © Дамблдор",
-    "🦑",
-    "1 метр",
-    "чезабретто",
-    "21 gang",
-    "джонни",
-    "асу",
-    "я пиздец умный",
-    "аазаххахаха",
-    "фрик ебаный",
-    "пасть",
-    "муравей",
-    "сральмар",
-    "👨🏿‍❤️‍👨🏿",
-    "абрамс",
-    "20 этаж",
-    "я не стилер",
-    "го в дотан",
-    "нахуй пошел",
-    "пиздец",
-    "а соси соси мне не сделаешь?",
-]
-
-
-def rand_insult() -> str:
-    return random.choice(insults)
-
-
 def build_caption(user: telegram.User, url: str) -> str:
     user_id = user.id
     username = user.username or user.first_name
@@ -87,8 +33,8 @@ def build_caption(user: telegram.User, url: str) -> str:
     return fr"От {user_link} \- {original}"
 
 
-DEFAULT_CHANCE = 50
-
+TELEGRAM_MAX_IMG_SIZE = 10 * 1024 * 1024
+TELEGRAM_MAX_VIDEO_SIZE = 50 * 1024 * 1024
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.message
@@ -101,12 +47,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     caption = build_caption(message.from_user, url)
 
     if not is_tiktok_link(url) and not is_youtube_shorts_link(url):
-        chance = DEFAULT_CHANCE
-        if update.effective_user is not None and update.effective_user.id == 802077196:
-            chance = 5
-
-        if random.randint(1, chance) == 1:
-            await update.message.reply_text(rand_insult())
         return
 
     try:
@@ -114,24 +54,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     except Exception as e:
         logger.error(f"Error deleting message: {e}")
 
-    content = None
     try:
+        content = None
+        
         if is_tiktok_link(url):
             content = tiktokApiClient.get_content(url)
         elif is_youtube_shorts_link(url):
             content = youtubeApiClient.get_content(url)
-    except Exception as e:
-        logger.error(f"Error getting content: {e}")
-        await context.bot.send_message(update.message.chat_id,
-                                       "Не удалось получить контент. Проверьте ссылку или попробуйте позже.")
-        return
 
-    try:
         if isinstance(content, Collection):
             with content as collection:
                 media_group = []
                 for img in collection.images[:10]:
-                    if img.temp.size > 10 * 1024 * 1024:
+                    if img.temp.size > TELEGRAM_MAX_IMG_SIZE:
                         continue
 
                     with open(img.temp.path, "rb") as image_file:
@@ -147,70 +82,77 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     logger.info("Images sent successfully as media group")
                 else:
                     logger.warning("No images to send")
-                    await context.bot.send_message(update.message.chat_id,
-                                                   "Не удалось подготовить изображения для отправки.")
-                    return
+                    raise Exception("No images to send")
 
                 if collection.audio:
                     with open(collection.audio.temp.path, "rb") as audio_file:
-                        await context.bot.send_audio(
-                            chat_id=chat_id,
-                            audio=audio_file,
-                            title=collection.audio.title,
-                            caption=caption,
-                            parse_mode=telegram.constants.ParseMode.MARKDOWN_V2
-                        )
-                        logger.info("Audio sent successfully as audio")
-
-        elif isinstance(content, Video):
-            with content as video:
-                if video.temp.size > 50 * 1024 * 1024:
-                    await context.bot.send_message(update.message.chat_id, "Видео слишком большое.")
-                    return
-                with open(video.temp.path, "rb") as video_file:
-                    await context.bot.send_video(
+                        audio_data = audio_file.read()
+                    await context.bot.send_audio(
                         chat_id=chat_id,
-                        video=video_file,
-                        supports_streaming=True,
+                        audio=audio_data,
+                        title=collection.audio.title,
                         caption=caption,
                         parse_mode=telegram.constants.ParseMode.MARKDOWN_V2
                     )
-                    logger.info("Video sent successfully as media")
+                    logger.info("Audio sent successfully as audio")
+
+        elif isinstance(content, Video):
+            with content as video:
+                if video.temp.size > TELEGRAM_MAX_VIDEO_SIZE:
+                    await context.bot.send_message(
+                        update.message.chat_id, 
+                        f"Видео слишком большое. [Оригинал]({url}).",
+                        parse_mode=telegram.constants.ParseMode.MARKDOWN_V2
+                    )
+                    return
+                with open(video.temp.path, "rb") as video_file:
+                    video_data = video_file.read()
+                await context.bot.send_video(
+                    chat_id=chat_id,
+                    video=video_data,
+                    supports_streaming=True,
+                    caption=caption,
+                    parse_mode=telegram.constants.ParseMode.MARKDOWN_V2
+                )
+                logger.info("Video sent successfully as media")
 
     except Exception as e:
         logger.error(f"Error sending content: {e}")
-        await context.bot.send_message(update.message.chat_id, "Не удалось отправить контент. Попробуйте позже.")
+        await context.bot.send_message(
+            update.message.chat_id,
+            f"Что-то пошло не так. [Оригинал]({url}).",
+            parse_mode=telegram.constants.ParseMode.MARKDOWN_V2
+        )
 
 
 async def roll(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if len(context.args) == 1:
-        try:
-            n = int(context.args[0])
-            await update.message.reply_text(str(random.randint(1, n)))
-        except ValueError:
-            await update.message.reply_text(rand_insult())
-        return
-    elif len(context.args) == 2:
-        try:
-            n = int(context.args[0])
-            m = int(context.args[1])
-            await update.message.reply_text(str(random.randint(n, m)))
-        except ValueError:
-            await update.message.reply_text(rand_insult())
-        return
-    elif len(context.args) > 2:
-        await update.message.reply_text(rand_insult())
-        return
+    a = 100_000
+    b = 1_000_000 - 1
 
-    await update.message.reply_text(str(random.randint(100000, 1000000 - 1)))
+    try:
+        if len(context.args) == 1:
+            a = 1
+            b = int(context.args[0])
+        elif len(context.args) == 2:
+            a = int(context.args[0])
+            b = int(context.args[1])
+
+        await update.message.reply_text(str(random.randint(a, b)))
+    except ValueError as e:
+        await context.bot.send_message(update.message.chat_id, "Хочу чиселки!")
+        return
+    except Exception as e:
+        logger.error(f"Error rolling: {e}")
+        await context.bot.send_message(
+            update.message.chat_id, 
+            f"Что-то пошло не так. Попробуйте позже.",
+        )
+        return
 
 
 async def choose(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if len(context.args) <= 1:
-        await context.bot.send_message(
-            update.message.chat_id,
-            rand_insult()
-        )
+        await context.bot.send_message(update.message.chat_id, "А где выбор?")
         return
 
     await context.bot.send_message(
@@ -218,11 +160,33 @@ async def choose(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         random.choice(context.args)
     )
 
-async def handle_all(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    try:
-        await update.message.pin(disable_notification=False)
-        await asyncio.sleep(10)
-        await update.message.unpin()
-    except Exception as e:
-        logger.logger.error(e)
 
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    help_text = """
+*Доступные команды:*
+
+🎲 /roll [max] или /roll [min] [max]
+   Случайное число от 1 до 1,000,000 по умолчанию
+
+🤔 /ch option1 option2 \.\.\.
+   Выбрать одну опцию из предложенных
+
+💬 /help
+   Показать это сообщение
+
+📹 *Автоматическая обработка:*
+   Просто отправь ссылку на TikTok или YouTube Shorts, и я скачаю видео/фото
+    """
+    await context.bot.send_message(
+        update.message.chat_id,
+        help_text,
+        parse_mode=telegram.constants.ParseMode.MARKDOWN_V2
+    )
+
+async def set_commands(self: Application) -> None:
+    commands = [
+        BotCommand("roll", "Случайное число"),
+        BotCommand("ch", "Выбрать из опций"),
+        BotCommand("help", "Справка по командам"),
+    ]
+    await self.bot.set_my_commands(commands)

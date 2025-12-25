@@ -26,7 +26,7 @@ def is_youtube_shorts_link(text: str) -> bool:
 
 
 def is_instagram_reels_link(text: str) -> bool:
-    instagram_pattern = r"(https?://(www\.)?instagram\.com/(reel|p)/.+)"
+    instagram_pattern = r"(https?://(www\.)?instagram\.com/(reels?|p)/.+)"
     return bool(re.match(instagram_pattern, text))
 
 

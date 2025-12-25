@@ -7,11 +7,12 @@ import telegram
 from telegram import Update, InputMediaPhoto, BotCommand
 from telegram.ext import ContextTypes, Application
 
-from api import TikTokApiClient, Collection, Video, YouTubeApiClient
+from api import TikTokApiClient, Collection, Video, YouTubeApiClient, InstagramApiClient
 from logger import logger
 
 tiktokApiClient = TikTokApiClient()
 youtubeApiClient = YouTubeApiClient()
+instagramApiClient = InstagramApiClient()
 
 
 def is_tiktok_link(text: str) -> bool:
@@ -22,6 +23,11 @@ def is_tiktok_link(text: str) -> bool:
 def is_youtube_shorts_link(text: str) -> bool:
     shorts_pattern = r"(https?://(www\.)?youtube\.com/shorts/.+|https?://youtu\.be/.+)"
     return bool(re.match(shorts_pattern, text))
+
+
+def is_instagram_reels_link(text: str) -> bool:
+    instagram_pattern = r"(https?://(www\.)?instagram\.com/(reel|p)/.+)"
+    return bool(re.match(instagram_pattern, text))
 
 
 def build_caption(user: telegram.User, url: str) -> str:
@@ -47,7 +53,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     chat_id = message.chat_id
     caption = build_caption(message.from_user, url)
 
-    if not is_tiktok_link(url) and not is_youtube_shorts_link(url):
+    if not is_tiktok_link(url) and not is_youtube_shorts_link(url) and not is_instagram_reels_link(url):
         return
 
     try:
@@ -62,6 +68,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             content = tiktokApiClient.get_content(url)
         elif is_youtube_shorts_link(url):
             content = youtubeApiClient.get_content(url)
+        elif is_instagram_reels_link(url):
+            content = instagramApiClient.get_content(url)
 
         if isinstance(content, Collection):
             with content as collection:
@@ -176,7 +184,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
    Показать это сообщение
 
 📹 *Автоматическая обработка:*
-   Просто отправь ссылку на TikTok или YouTube Shorts, и я скачаю видео/фото
+   Просто отправь ссылку на TikTok, YouTube Shorts или Instagram Reels, и я скачаю видео/фото
     """
     await context.bot.send_message(
         update.message.chat_id,

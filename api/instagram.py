@@ -20,7 +20,19 @@ class InstagramApiClient:
                 info = ydl.extract_info(instagram_url, download=True)  # Download the video
                 video_path = ydl.prepare_filename(info)  # Get the path to the downloaded file
                 file_size = os.path.getsize(video_path)
-                return Video(instagram_url, TempFile(file_size, video_path))
+                
+                # Extract video metadata
+                width = info.get('width')
+                height = info.get('height')
+                duration = info.get('duration')
+                
+                return Video(
+                    instagram_url, 
+                    TempFile(file_size, video_path),
+                    width=width,
+                    height=height,
+                    duration=duration
+                )
         except Exception as e:
             raise Exception(f"Failed to download Instagram Reel: {str(e)}")
 

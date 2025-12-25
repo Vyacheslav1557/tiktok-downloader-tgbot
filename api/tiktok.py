@@ -41,7 +41,18 @@ class TikTokApiClient:
 
         elif 'play' in data:
             video_url = data['play']
-            return Video(video_url, save_media_to_tmp(video_url, ".mp4"))
+            # Extract video metadata if available
+            width = data.get('width')
+            height = data.get('height')
+            duration = data.get('duration')
+            
+            return Video(
+                video_url, 
+                save_media_to_tmp(video_url, ".mp4"),
+                width=width,
+                height=height,
+                duration=duration
+            )
 
         raise Exception(body.get("msg", "api code error"))
 

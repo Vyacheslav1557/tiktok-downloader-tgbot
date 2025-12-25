@@ -121,7 +121,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     video=video_data,
                     supports_streaming=True,
                     caption=caption,
-                    parse_mode=telegram.constants.ParseMode.HTML
+                    parse_mode=telegram.constants.ParseMode.HTML,
+                    width=video.width,
+                    height=video.height,
+                    duration=video.duration
                 )
                 logger.info("Video sent successfully as media")
 

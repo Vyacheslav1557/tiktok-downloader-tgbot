@@ -57,6 +57,9 @@ class Collection:
 class Video:
     url: str
     temp: Optional[TempFile]
+    width: Optional[int] = None
+    height: Optional[int] = None
+    duration: Optional[int] = None
 
     def __enter__(self):
         return self

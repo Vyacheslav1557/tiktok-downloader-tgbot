@@ -1,18 +1,18 @@
 import html
 import random
 import re
-from typing import Callable, Optional
 
 import telegram
-from telegram import BotCommand, InputMediaPhoto, Update
+from telegram import BotCommand, InputMediaPhoto, InputMediaVideo, Update
 from telegram.ext import Application, ContextTypes
 
-from api import Collection, FileTooLargeError, InstagramApiClient, TikTokApiClient, Video, YouTubeApiClient
+from api import Collection, FileTooLargeError, Image, InstagramApiClient, Post, TikTokApiClient, Video, XApiClient, YouTubeApiClient
 from logger import logger
 
 tiktok_api_client = TikTokApiClient()
 youtube_api_client = YouTubeApiClient()
 instagram_api_client = InstagramApiClient()
+x_api_client = XApiClient()
 
 TELEGRAM_MAX_IMG_SIZE = 10 * 1024 * 1024
 TELEGRAM_MAX_VIDEO_SIZE = 50 * 1024 * 1024
@@ -20,8 +20,7 @@ TELEGRAM_MAX_VIDEO_SIZE = 50 * 1024 * 1024
 TIKTOK_LINK_RE = re.compile(r"https?://(www\.)?(tiktok\.com|vm\.tiktok\.com|vt\.tiktok\.com)/.+")
 YOUTUBE_SHORTS_LINK_RE = re.compile(r"https?://(www\.)?youtube\.com/shorts/.+|https?://youtu\.be/.+")
 INSTAGRAM_REELS_LINK_RE = re.compile(r"https?://(www\.)?instagram\.com/(reels?|p)/.+")
-
-ContentGetter = Callable[[str, Optional[int]], Collection | Video]
+X_LINK_RE = re.compile(r"https?://(www\.)?(x\.com|twitter\.com)/[^\s]+/status/\d+.*")
 
 
 def is_tiktok_link(text: str) -> bool:
@@ -36,14 +35,8 @@ def is_instagram_reels_link(text: str) -> bool:
     return bool(INSTAGRAM_REELS_LINK_RE.match(text))
 
 
-def detect_content_getter(url: str) -> Optional[ContentGetter]:
-    if is_tiktok_link(url):
-        return tiktok_api_client.get_content
-    if is_youtube_shorts_link(url):
-        return youtube_api_client.get_content
-    if is_instagram_reels_link(url):
-        return instagram_api_client.get_content
-    return None
+def is_x_link(text: str) -> bool:
+    return bool(X_LINK_RE.match(text))
 
 
 def build_caption(user: telegram.User, url: str) -> str:
@@ -61,14 +54,62 @@ async def send_too_large_message(context: ContextTypes.DEFAULT_TYPE, chat_id: in
     )
 
 
+async def send_x_post(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    caption: str,
+    post: Post,
+) -> None:
+    if not post.card.temp:
+        raise Exception("No X card to send")
+
+    with open(post.card.temp.path, "rb") as card_file:
+        await context.bot.send_photo(chat_id=chat_id, photo=card_file.read(), caption=caption, parse_mode=telegram.constants.ParseMode.HTML)
+
+    if not post.media:
+        return
+
+    media_group = []
+    for media in post.media[:10]:
+        if isinstance(media, Image):
+            if post.inlined_image_url and media.url == post.inlined_image_url:
+                continue
+            if not media.temp or media.temp.size > TELEGRAM_MAX_IMG_SIZE:
+                continue
+            with open(media.temp.path, "rb") as image_file:
+                media_group.append(InputMediaPhoto(media=image_file.read()))
+            continue
+
+        if isinstance(media, Video):
+            if not media.temp or media.temp.size > TELEGRAM_MAX_VIDEO_SIZE:
+                continue
+            with open(media.temp.path, "rb") as video_file:
+                media_group.append(
+                    InputMediaVideo(
+                        media=video_file.read(),
+                        width=media.width,
+                        height=media.height,
+                        duration=media.duration,
+                        supports_streaming=True,
+                    )
+                )
+
+    if media_group:
+        await context.bot.send_media_group(chat_id=chat_id, media=media_group)
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.message
     if not message or not message.text:
         return
 
     url = message.text.strip()
-    get_content = detect_content_getter(url)
-    if not get_content:
+    if not (
+        is_tiktok_link(url)
+        or is_youtube_shorts_link(url)
+        or is_instagram_reels_link(url)
+        or is_x_link(url)
+    ):
         return
 
     chat_id = message.chat_id
@@ -80,7 +121,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         logger.warning(f"Failed to delete message: {e}")
 
     try:
-        content = get_content(url, TELEGRAM_MAX_VIDEO_SIZE)
+        if is_tiktok_link(url):
+            content = tiktok_api_client.get_content(url, TELEGRAM_MAX_VIDEO_SIZE)
+        elif is_youtube_shorts_link(url):
+            content = youtube_api_client.get_content(url, TELEGRAM_MAX_VIDEO_SIZE)
+        elif is_instagram_reels_link(url):
+            content = instagram_api_client.get_content(url, TELEGRAM_MAX_VIDEO_SIZE)
+        elif is_x_link(url):
+            content = x_api_client.get_content(
+                url,
+                max_video_size=TELEGRAM_MAX_VIDEO_SIZE,
+                max_image_size=TELEGRAM_MAX_IMG_SIZE,
+            )
+        else:
+            return
 
         if isinstance(content, Collection):
             with content as collection:
@@ -138,6 +192,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     duration=video.duration,
                 )
                 logger.info("Video sent successfully")
+            return
+
+        if isinstance(content, Post):
+            with content as post:
+                await send_x_post(context, chat_id, caption, post)
+                logger.info("X post sent successfully")
             return
 
         raise Exception("Unsupported content type")
@@ -207,7 +267,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "💬 <code>/help</code>\n"
         "Показать это сообщение\n\n"
         "📹 <b>Автоматическая обработка:</b>\n"
-        "Отправь ссылку на TikTok, YouTube Shorts или Instagram Reels, и я скачаю видео/фото"
+        "Отправь ссылку на TikTok, YouTube Shorts, Instagram Reels или X/Twitter пост"
     )
 
     await context.bot.send_message(

@@ -1,37 +1,23 @@
-import os
-import tempfile
+from typing import Optional
 
-import yt_dlp
-
-from api.models import TempFile, Video
-
-YDL_OPTS = {
-    'format': 'best[ext=mp4][vcodec^=avc1][acodec!=none]/best[ext=mp4][acodec!=none]/best[acodec!=none]/best',
-    'outtmpl': os.path.join(tempfile.gettempdir(), '%(id)s.%(ext)s'),
-    'noplaylist': True,
-    'quiet': True,
-}
+from api.errors import FileTooLargeError
+from api.models import Video
+from api.yt_dlp_client import download_video
 
 
 class YouTubeApiClient:
-    def get_content(self, youtube_url: str) -> Video:
+    def get_content(self, youtube_url: str, max_video_size: Optional[int] = None) -> Video:
         try:
-            with yt_dlp.YoutubeDL(YDL_OPTS) as ydl:
-                info = ydl.extract_info(youtube_url, download=True)  # Download the video
-                video_path = ydl.prepare_filename(info)  # Get the path to the downloaded file
-                file_size = os.path.getsize(video_path)
-                
-                # Extract video metadata
-                width = info.get('width')
-                height = info.get('height')
-                duration = info.get('duration')
-                
-                return Video(
-                    youtube_url, 
-                    TempFile(file_size, video_path),
-                    width=width,
-                    height=height,
-                    duration=duration
-                )
+            return download_video(
+                youtube_url,
+                max_video_size=max_video_size,
+                extractor_args={
+                    'youtube': {
+                        'player_client': ['android', 'ios', 'tv_simply', 'web'],
+                    }
+                },
+            )
+        except FileTooLargeError:
+            raise
         except Exception as e:
-            raise Exception(f"Failed to download YouTube Shorts: {str(e)}")
+            raise Exception(f"Failed to download YouTube Shorts: {str(e)}") from e

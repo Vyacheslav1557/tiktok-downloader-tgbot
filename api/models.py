@@ -9,6 +9,16 @@ class TempFile:
     path: str
 
 
+def _cleanup_temp_file(temp: Optional[TempFile]) -> None:
+    if not temp:
+        return
+
+    try:
+        os.remove(temp.path)
+    except FileNotFoundError:
+        return
+
+
 @dataclasses.dataclass
 class Image:
     url: str
@@ -18,7 +28,7 @@ class Image:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        os.remove(self.temp.path)
+        _cleanup_temp_file(self.temp)
 
 
 @dataclasses.dataclass
@@ -31,7 +41,7 @@ class Audio:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        os.remove(self.temp.path)
+        _cleanup_temp_file(self.temp)
 
 
 @dataclasses.dataclass
@@ -43,14 +53,16 @@ class Collection:
         for image in self.images:
             image.__enter__()
 
-        self.audio.__enter__()
+        if self.audio:
+            self.audio.__enter__()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         for image in self.images:
             image.__exit__(exc_type, exc_val, exc_tb)
 
-        self.audio.__exit__(exc_type, exc_val, exc_tb)
+        if self.audio:
+            self.audio.__exit__(exc_type, exc_val, exc_tb)
 
 
 @dataclasses.dataclass
@@ -65,4 +77,4 @@ class Video:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        os.remove(self.temp.path)
+        _cleanup_temp_file(self.temp)

@@ -1,121 +1,132 @@
-import asyncio
+import html
 import random
 import re
-import html
+from typing import Callable, Optional
 
 import telegram
-from telegram import Update, InputMediaPhoto, BotCommand
-from telegram.ext import ContextTypes, Application
+from telegram import BotCommand, InputMediaPhoto, Update
+from telegram.ext import Application, ContextTypes
 
-from api import TikTokApiClient, Collection, Video, YouTubeApiClient, InstagramApiClient
+from api import Collection, FileTooLargeError, InstagramApiClient, TikTokApiClient, Video, YouTubeApiClient
 from logger import logger
 
-tiktokApiClient = TikTokApiClient()
-youtubeApiClient = YouTubeApiClient()
-instagramApiClient = InstagramApiClient()
-
-
-def is_tiktok_link(text: str) -> bool:
-    tiktok_pattern = r"(https?://(www\.)?(tiktok\.com|vm\.tiktok\.com|vt\.tiktok\.com)/.+)"
-    return bool(re.match(tiktok_pattern, text))
-
-
-def is_youtube_shorts_link(text: str) -> bool:
-    shorts_pattern = r"(https?://(www\.)?youtube\.com/shorts/.+|https?://youtu\.be/.+)"
-    return bool(re.match(shorts_pattern, text))
-
-
-def is_instagram_reels_link(text: str) -> bool:
-    instagram_pattern = r"(https?://(www\.)?instagram\.com/(reels?|p)/.+)"
-    return bool(re.match(instagram_pattern, text))
-
-
-def build_caption(user: telegram.User, url: str) -> str:
-    user_id = user.id
-    username = html.escape(user.username or user.first_name)
-    user_link = f'<a href="tg://user?id={user_id}">{username}</a>'
-
-    original = f'<a href="{url}">оригинал</a>'
-
-    return f"От {user_link} - {original}"
-
+tiktok_api_client = TikTokApiClient()
+youtube_api_client = YouTubeApiClient()
+instagram_api_client = InstagramApiClient()
 
 TELEGRAM_MAX_IMG_SIZE = 10 * 1024 * 1024
 TELEGRAM_MAX_VIDEO_SIZE = 50 * 1024 * 1024
+
+TIKTOK_LINK_RE = re.compile(r"https?://(www\.)?(tiktok\.com|vm\.tiktok\.com|vt\.tiktok\.com)/.+")
+YOUTUBE_SHORTS_LINK_RE = re.compile(r"https?://(www\.)?youtube\.com/shorts/.+|https?://youtu\.be/.+")
+INSTAGRAM_REELS_LINK_RE = re.compile(r"https?://(www\.)?instagram\.com/(reels?|p)/.+")
+
+ContentGetter = Callable[[str, Optional[int]], Collection | Video]
+
+
+def is_tiktok_link(text: str) -> bool:
+    return bool(TIKTOK_LINK_RE.match(text))
+
+
+def is_youtube_shorts_link(text: str) -> bool:
+    return bool(YOUTUBE_SHORTS_LINK_RE.match(text))
+
+
+def is_instagram_reels_link(text: str) -> bool:
+    return bool(INSTAGRAM_REELS_LINK_RE.match(text))
+
+
+def detect_content_getter(url: str) -> Optional[ContentGetter]:
+    if is_tiktok_link(url):
+        return tiktok_api_client.get_content
+    if is_youtube_shorts_link(url):
+        return youtube_api_client.get_content
+    if is_instagram_reels_link(url):
+        return instagram_api_client.get_content
+    return None
+
+
+def build_caption(user: telegram.User, url: str) -> str:
+    user_name = html.escape(user.username or user.first_name)
+    user_link = f'<a href="tg://user?id={user.id}">{user_name}</a>'
+    original_link = f'<a href="{html.escape(url, quote=True)}">оригинал</a>'
+    return f"От {user_link} - {original_link}"
+
+
+async def send_too_large_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int, url: str) -> None:
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=f"Видео слишком большое. <a href=\"{html.escape(url, quote=True)}\">Оригинал</a>.",
+        parse_mode=telegram.constants.ParseMode.HTML,
+    )
+
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.message
     if not message or not message.text:
         return
 
-    message = update.message
-    url = message.text
+    url = message.text.strip()
+    get_content = detect_content_getter(url)
+    if not get_content:
+        return
+
     chat_id = message.chat_id
     caption = build_caption(message.from_user, url)
 
-    if not is_tiktok_link(url) and not is_youtube_shorts_link(url) and not is_instagram_reels_link(url):
-        return
-
     try:
-        await update.message.delete()
+        await message.delete()
     except Exception as e:
-        logger.error(f"Error deleting message: {e}")
+        logger.warning(f"Failed to delete message: {e}")
 
     try:
-        content = None
-        
-        if is_tiktok_link(url):
-            content = tiktokApiClient.get_content(url)
-        elif is_youtube_shorts_link(url):
-            content = youtubeApiClient.get_content(url)
-        elif is_instagram_reels_link(url):
-            content = instagramApiClient.get_content(url)
+        content = get_content(url, TELEGRAM_MAX_VIDEO_SIZE)
 
         if isinstance(content, Collection):
             with content as collection:
                 media_group = []
-                for img in collection.images[:10]:
-                    if img.temp.size > TELEGRAM_MAX_IMG_SIZE:
+                for image in collection.images[:10]:
+                    if not image.temp or image.temp.size > TELEGRAM_MAX_IMG_SIZE:
                         continue
 
-                    with open(img.temp.path, "rb") as image_file:
+                    with open(image.temp.path, "rb") as image_file:
                         media_group.append(InputMediaPhoto(media=image_file.read()))
 
-                if media_group:
-                    await context.bot.send_media_group(
-                        chat_id=chat_id,
-                        media=media_group,
-                        caption=caption,
-                        parse_mode=telegram.constants.ParseMode.HTML
-                    )
-                    logger.info("Images sent successfully as media group")
-                else:
-                    logger.warning("No images to send")
+                if not media_group:
                     raise Exception("No images to send")
 
-                if collection.audio:
+                media_group[0].caption = caption
+                media_group[0].parse_mode = telegram.constants.ParseMode.HTML
+                await context.bot.send_media_group(chat_id=chat_id, media=media_group)
+                logger.info("Images sent successfully as media group")
+
+                if collection.audio and collection.audio.temp:
                     with open(collection.audio.temp.path, "rb") as audio_file:
                         audio_data = audio_file.read()
+
                     await context.bot.send_audio(
                         chat_id=chat_id,
                         audio=audio_data,
                         title=collection.audio.title,
                         caption=caption,
-                        parse_mode=telegram.constants.ParseMode.HTML
+                        parse_mode=telegram.constants.ParseMode.HTML,
                     )
-                    logger.info("Audio sent successfully as audio")
+                    logger.info("Audio sent successfully")
 
-        elif isinstance(content, Video):
+            return
+
+        if isinstance(content, Video):
             with content as video:
+                if not video.temp:
+                    raise Exception("No video to send")
+
                 if video.temp.size > TELEGRAM_MAX_VIDEO_SIZE:
-                    await context.bot.send_message(
-                        update.message.chat_id, 
-                        f"Видео слишком большое. <a href=\"{url}\">Оригинал</a>.",
-                        parse_mode=telegram.constants.ParseMode.HTML
-                    )
+                    await send_too_large_message(context, chat_id, url)
                     return
+
                 with open(video.temp.path, "rb") as video_file:
                     video_data = video_file.read()
+
                 await context.bot.send_video(
                     chat_id=chat_id,
                     video=video_data,
@@ -124,81 +135,92 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     parse_mode=telegram.constants.ParseMode.HTML,
                     width=video.width,
                     height=video.height,
-                    duration=video.duration
+                    duration=video.duration,
                 )
-                logger.info("Video sent successfully as media")
+                logger.info("Video sent successfully")
+            return
 
+        raise Exception("Unsupported content type")
+
+    except FileTooLargeError as e:
+        logger.info(f"Video is too large to send: size={e.size}, limit={e.limit}, url={url}")
+        await send_too_large_message(context, chat_id, url)
     except Exception as e:
         logger.error(f"Error sending content: {e}")
         await context.bot.send_message(
-            update.message.chat_id,
-            f"Что-то пошло не так. <a href=\"{url}\">Оригинал</a>.",
-            parse_mode=telegram.constants.ParseMode.HTML
+            chat_id=chat_id,
+            text=f"Что-то пошло не так. <a href=\"{html.escape(url, quote=True)}\">Оригинал</a>.",
+            parse_mode=telegram.constants.ParseMode.HTML,
         )
 
 
 async def roll(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    a = 100_000
-    b = 1_000_000 - 1
+    message = update.message
+    if not message:
+        return
+
+    min_value = 100_000
+    max_value = 1_000_000 - 1
 
     try:
         if len(context.args) == 1:
-            a = 1
-            b = int(context.args[0])
+            min_value = 1
+            max_value = int(context.args[0])
         elif len(context.args) == 2:
-            a = int(context.args[0])
-            b = int(context.args[1])
+            min_value = int(context.args[0])
+            max_value = int(context.args[1])
 
-        await update.message.reply_text(str(random.randint(a, b)))
-    except ValueError as e:
-        await context.bot.send_message(update.message.chat_id, "Хочу чиселки!")
-        return
+        await message.reply_text(str(random.randint(min_value, max_value)))
+    except ValueError:
+        await context.bot.send_message(chat_id=message.chat_id, text="Хочу чиселки!")
     except Exception as e:
         logger.error(f"Error rolling: {e}")
         await context.bot.send_message(
-            update.message.chat_id, 
-            f"Что-то пошло не так. Попробуйте позже.",
+            chat_id=message.chat_id,
+            text="Что-то пошло не так. Попробуйте позже.",
         )
-        return
 
 
 async def choose(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if len(context.args) <= 1:
-        await context.bot.send_message(update.message.chat_id, "А где выбор?")
+    message = update.message
+    if not message:
         return
 
-    await context.bot.send_message(
-        update.message.chat_id,
-        random.choice(context.args)
-    )
+    if len(context.args) <= 1:
+        await context.bot.send_message(chat_id=message.chat_id, text="А где выбор?")
+        return
+
+    await context.bot.send_message(chat_id=message.chat_id, text=random.choice(context.args))
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    help_text = """
-*Доступные команды:*
+    message = update.message
+    if not message:
+        return
 
-🎲 /roll [max] или /roll [min] [max]
-   Случайное число от 1 до 1,000,000 по умолчанию
-
-🤔 /ch option1 option2 \.\.\.
-   Выбрать одну опцию из предложенных
-
-💬 /help
-   Показать это сообщение
-
-📹 *Автоматическая обработка:*
-   Просто отправь ссылку на TikTok, YouTube Shorts или Instagram Reels, и я скачаю видео/фото
-    """
-    await context.bot.send_message(
-        update.message.chat_id,
-        help_text,
-        parse_mode=telegram.constants.ParseMode.MARKDOWN_V2
+    help_text = (
+        "<b>Доступные команды:</b>\n\n"
+        "🎲 <code>/roll [max]</code> или <code>/roll [min] [max]</code>\n"
+        "Случайное число от 1 до 1,000,000 по умолчанию\n\n"
+        "🤔 <code>/ch option1 option2 ...</code>\n"
+        "Выбрать одну опцию из предложенных\n\n"
+        "💬 <code>/help</code>\n"
+        "Показать это сообщение\n\n"
+        "📹 <b>Автоматическая обработка:</b>\n"
+        "Отправь ссылку на TikTok, YouTube Shorts или Instagram Reels, и я скачаю видео/фото"
     )
 
-async def set_commands(self: Application) -> None:
+    await context.bot.send_message(
+        chat_id=message.chat_id,
+        text=help_text,
+        parse_mode=telegram.constants.ParseMode.HTML,
+    )
+
+
+async def set_commands(app: Application) -> None:
     commands = [
         BotCommand("roll", "Случайное число"),
         BotCommand("ch", "Выбрать из опций"),
         BotCommand("help", "Справка по командам"),
     ]
-    await self.bot.set_my_commands(commands)
+    await app.bot.set_my_commands(commands)

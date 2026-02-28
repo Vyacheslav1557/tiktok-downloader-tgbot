@@ -15,7 +15,11 @@ dotenv.load_dotenv()
 
 
 def main() -> None:
-    app = ApplicationBuilder().token(os.getenv("BOT_TOKEN")).build()
+    bot_token = os.getenv("BOT_TOKEN")
+    if not bot_token:
+        raise RuntimeError("BOT_TOKEN is not set")
+
+    app = ApplicationBuilder().token(bot_token).build()
 
     app.add_handler(CommandHandler("roll", roll))
     app.add_handler(CommandHandler("ch", choose))

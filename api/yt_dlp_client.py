@@ -8,7 +8,13 @@ from api.errors import FileTooLargeError
 from api.models import TempFile, Video
 
 BASE_YDL_OPTS: dict[str, Any] = {
-    'format': 'bv*+ba/b',
+    'format': (
+        'best[ext=mp4][vcodec^=avc1][acodec^=mp4a]/'
+        'best[ext=mp4][vcodec^=avc1][acodec!=none]/'
+        'best[ext=mp4][acodec!=none]/'
+        'best[acodec!=none]/'
+        'best'
+    ),
     'merge_output_format': 'mp4',
     'outtmpl': os.path.join(tempfile.gettempdir(), '%(id)s.%(ext)s'),
     'noplaylist': True,

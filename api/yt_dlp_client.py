@@ -77,17 +77,28 @@ def _estimate_video_size(info: Any) -> Optional[int]:
     return None
 
 
-def _build_ydl_options(max_video_size: Optional[int], extractor_args: Optional[dict[str, Any]]) -> dict[str, Any]:
+def _build_ydl_options(
+    max_video_size: Optional[int],
+    extractor_args: Optional[dict[str, Any]],
+    cookiefile: Optional[str],
+) -> dict[str, Any]:
     ydl_options = dict(BASE_YDL_OPTS)
     if max_video_size is not None:
         ydl_options['max_filesize'] = max_video_size
     if extractor_args:
         ydl_options['extractor_args'] = extractor_args
+    if cookiefile:
+        ydl_options['cookiefile'] = cookiefile
     return ydl_options
 
 
-def download_video(url: str, max_video_size: Optional[int] = None, extractor_args: Optional[dict[str, Any]] = None) -> Video:
-    ydl_options = _build_ydl_options(max_video_size, extractor_args)
+def download_video(
+    url: str,
+    max_video_size: Optional[int] = None,
+    extractor_args: Optional[dict[str, Any]] = None,
+    cookiefile: Optional[str] = None,
+) -> Video:
+    ydl_options = _build_ydl_options(max_video_size, extractor_args, cookiefile)
 
     with yt_dlp.YoutubeDL(cast(Any, ydl_options)) as ydl:
         preflight_info = ydl.extract_info(url, download=False)

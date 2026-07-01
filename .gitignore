@@ -1,3 +1,5 @@
 .idea
 .env
 poetry.lock
+cookies.txt
+*.cookies.txt

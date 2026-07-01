@@ -59,6 +59,32 @@ poetry install
 
    Замените `ВАШ_ТЕЛЕГРАМ_БОТ_ТОКЕН` на реальный токен, полученный от [@BotFather](https://t.me/BotFather).
 
+### Cookies для Instagram (обязательно для Reels)
+
+Instagram больше не отдаёт видео неавторизованным запросам — без cookies залогиненного
+аккаунта бот на любой ссылке Reels ответит «Что-то пошло не так». Чтобы Reels работали,
+нужно передать yt-dlp cookies:
+
+1. Залогиньтесь в Instagram в браузере (желательно отдельным / одноразовым аккаунтом,
+   так как Instagram может ограничивать автоматические запросы).
+
+2. Экспортируйте cookies в формате Netscape в файл `cookies.txt`. Проще всего — расширением
+   для браузера (например, «Get cookies.txt LOCALLY») или командой:
+
+   ```bash
+   yt-dlp --cookies-from-browser chrome --cookies cookies.txt "https://www.instagram.com/"
+   ```
+
+3. Положите `cookies.txt` на сервер (он уже в `.gitignore`, в репозиторий не попадёт) и
+   укажите путь к нему в `.env`:
+
+   ```dotenv
+   INSTAGRAM_COOKIES=/path/to/cookies.txt
+   ```
+
+Если переменная `INSTAGRAM_COOKIES` не задана, бот продолжит работать для TikTok и YouTube,
+но Reels скачиваться не будут.
+
 ## Запуск приложения
 
 Для запуска бота выполните команду:

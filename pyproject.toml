@@ -11,8 +11,9 @@ python = "^3.10"
 python-telegram-bot = "^22.0"
 python-dotenv = "^1.1.0"
 requests = "^2.32.3"
-yt-dlp = "^2025.4.30"
+yt-dlp = { version = "*", allow-prereleases = true }
 Pillow = "^11.2.1"
+curl-cffi = "^0.15.0"
 
 
 [build-system]

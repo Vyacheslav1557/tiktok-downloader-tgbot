@@ -80,19 +80,4 @@ class Video:
         _cleanup_temp_file(self.temp)
 
 
-@dataclasses.dataclass
-class Post:
-    card: Image
-    media: list[Image | Video]
-    inlined_image_url: Optional[str] = None
 
-    def __enter__(self):
-        self.card.__enter__()
-        for item in self.media:
-            item.__enter__()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.card.__exit__(exc_type, exc_val, exc_tb)
-        for item in self.media:
-            item.__exit__(exc_type, exc_val, exc_tb)

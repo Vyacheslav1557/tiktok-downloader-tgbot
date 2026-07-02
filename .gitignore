@@ -1,4 +1,4 @@
 .idea
 .env
 poetry.lock
-__pycache__
+**/__pycache__/

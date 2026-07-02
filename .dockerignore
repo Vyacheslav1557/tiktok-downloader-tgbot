@@ -1,0 +1,20 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+.pytest_cache/
+.mypy_cache/
+
+# Environment and secrets
+.env
+
+# Docker / project config
+Dockerfile
+.dockerignore
+README.md

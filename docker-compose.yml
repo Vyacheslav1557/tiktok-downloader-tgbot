@@ -1,0 +1,7 @@
+services:
+  bot:
+    image: ghcr.io/brawler2011/tiktok-downloader-tgbot:latest
+    container_name: tiktok-downloader-tgbot
+    restart: unless-stopped
+    env_file:
+      - .env
